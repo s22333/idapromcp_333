@@ -12,9 +12,7 @@ from mcp.server.fastmcp import FastMCP
 # log_level 对于 Cline 正常工作是必需的：https://github.com/jlowin/fastmcp/issues/81
 mcp = FastMCP(
     "github.com/namename333/idapromcp_333", 
-    log_level="ERROR",
-    protocol_version="1.6.0",
-    description="IDA Pro Model Context Protocol Server"
+    log_level="ERROR"
 )
 
 jsonrpc_request_id = 1
@@ -55,16 +53,38 @@ def load_config():
     """
     default_config = {
         "host": "127.0.0.1",
-        "port": 13337
+        "port": 13337,
     }
+
+    def _pick_port(value):
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            return None
+        if 1 <= port <= 65535:
+            return port
+        return None
     
     config_path = get_config_file_path()
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 user_config = json.load(f)
-                # 合并默认配置和用户配置
-                default_config.update(user_config)
+                if isinstance(user_config, dict):
+                    # 顶层port优先，其次兼容历史分组配置
+                    port_candidates = [
+                        user_config.get("port"),
+                        user_config.get("plugin", {}).get("port") if isinstance(user_config.get("plugin"), dict) else None,
+                        user_config.get("simple_server", {}).get("port") if isinstance(user_config.get("simple_server"), dict) else None,
+                    ]
+                    host = user_config.get("host")
+                    if isinstance(host, str) and host.strip():
+                        default_config["host"] = host
+                    for candidate in port_candidates:
+                        picked_port = _pick_port(candidate)
+                        if picked_port is not None:
+                            default_config["port"] = picked_port
+                            break
         except Exception as e:
             print(f"警告: 加载配置文件失败: {e}")
     
@@ -73,9 +93,10 @@ def load_config():
         default_config["host"] = os.environ["MCP_HOST"]
     
     if "MCP_PORT" in os.environ:
-        try:
-            default_config["port"] = int(os.environ["MCP_PORT"])
-        except ValueError:
+        picked_port = _pick_port(os.environ["MCP_PORT"])
+        if picked_port is not None:
+            default_config["port"] = picked_port
+        else:
             print("警告: 环境变量MCP_PORT不是有效的端口号")
     
     return default_config
@@ -236,9 +257,10 @@ code = """# NOTE: This file has been automatically generated, do not modify!
 # Architecture based on https://github.com/namename333/idapromcp_333 (MIT License)
 import sys
 if sys.version_info >= (3, 12):
-    from typing import Annotated, Optional, TypedDict, Generic, TypeVar, NotRequired
+    from typing import Annotated, Optional, TypedDict, Generic, TypeVar, NotRequired, Union
 else:
     from typing_extensions import Annotated, Optional, TypedDict, Generic, TypeVar, NotRequired
+    from typing import Union
 from pydantic import Field
 
 T = TypeVar("T")
@@ -250,6 +272,17 @@ for type in visitor.types.values():
 for function in visitor.functions.values():
     code += ast.unparse(function)
     code += "\n\n"
+
+print("Code generation complete. Writing to file...")
+try:
+    with open(GENERATED_PY, "w", encoding="utf-8") as f:
+        f.write(code)
+    print(f"Successfully wrote to {GENERATED_PY}")
+except Exception as e:
+    print(f"Failed to write file: {e}")
+    raise
+
+print("Compiling and executing...")
 with open(GENERATED_PY, "w", encoding="utf-8") as f:
     f.write(code)
 exec(compile(code, GENERATED_PY, "exec"))
@@ -327,23 +360,30 @@ def get_python_executable():
     return sys.executable
 
 def print_mcp_config():
+    server_config = {
+        "command": get_python_executable(),
+        "args": [
+            __file__,
+        ],
+        "timeout": 1800,
+        "disabled": False,
+        "paths": ["/jsonrpc", "/mcp"],
+    }
+    protocol_version = getattr(mcp, "protocol_version", None)
+    if protocol_version:
+        server_config["protocolVersion"] = protocol_version
+
     print(json.dumps({
             "mcpServers": {
-                mcp.name: {
-                    "command": get_python_executable(),
-                    "args": [
-                        __file__,
-                    ],
-                    "timeout": 1800,
-                    "disabled": False,
-                    "protocolVersion": mcp.protocol_version,
-                    "paths": ["/jsonrpc", "/mcp"]
-                }
+                mcp.name: server_config
             }
         }, indent=2)
     )
 
-def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
+def install_mcp_servers(*, uninstall=False, quiet=False, env=None):
+    if env is None:
+        env = {}
+
     if sys.platform == "win32":
         configs = {
             "Cline": (os.path.join(os.getenv("APPDATA"), "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
@@ -410,9 +450,12 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
                 continue
             del mcp_servers[mcp.name]
         else:
+            merged_env = {}
             if mcp.name in mcp_servers:
-                for key, value in mcp_servers[mcp.name].get("env", {}):
-                    env[key] = value
+                existing_env = mcp_servers[mcp.name].get("env", {})
+                if isinstance(existing_env, dict):
+                    merged_env.update(existing_env)
+            merged_env.update(env)
             mcp_servers[mcp.name] = {
                 "command": get_python_executable(),
                 "args": [
@@ -423,8 +466,8 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env={}):
                 "autoApprove": MCP_FUNCTIONS, # Changed from SAFE_FUNCTIONS to MCP_FUNCTIONS
                 "alwaysAllow": MCP_FUNCTIONS, # Changed from SAFE_FUNCTIONS to MCP_FUNCTIONS
             }
-            if env:
-                mcp_servers[mcp.name]["env"] = env
+            if merged_env:
+                mcp_servers[mcp.name]["env"] = merged_env
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         if not quiet:

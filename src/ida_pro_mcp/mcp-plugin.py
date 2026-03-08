@@ -2151,12 +2151,7 @@ def list_breakpoints():
         ea = ida_bytes.next_head(ea, end_ea)
     return breakpoints
 
-@jsonrpc
-@idaread
-@unsafe
-def dbg_list_breakpoints():
-    """列出程序中的所有断点。"""
-    return list_breakpoints()
+
 
 @jsonrpc
 @idaread
@@ -2369,18 +2364,17 @@ def _generate_angr_script_content(script_type: str, func_name: str, func_size: i
             args_code.append(f'{arg_name} = claripy.BVS("{arg_name}", {arg_size})  # 参数{i+1}')
             call_args.append(arg_name)
         
+        args_code_str = "\n".join(args_code)
+        
         script_body = f"""
 # 创建函数参数的符号变量
-{"\n".join(args_code)}
+{args_code_str}
 
 # 创建调用函数的状态
 state = proj.factory.call_state({func_name}_addr, {', '.join(call_args)})
 
 # 添加约束条件
-# 可以取消注释并根据需要修改以下约束
-# state.solver.add(sym_arg1 > 0)  # 示例约束
-
-# 创建模拟管理器
+# Create simulation manager
 simgr = proj.factory.simgr(state)
 """
         
@@ -2551,294 +2545,42 @@ def generate_frida_script(
     返回：
         生成的JavaScript脚本代码
     """
-    # 参数验证
     if options is None:
         options = {}
-    
-    # 验证脚本类型
+
+    if not isinstance(options, dict):
+        raise IDAError("options参数必须是字典")
+
     valid_script_types = ['hook', 'memory_dump', 'string_hook']
     if script_type not in valid_script_types:
         raise IDAError(f"不支持的脚本类型: {script_type}。支持的类型: {', '.join(valid_script_types)}")
-    
-    try:
-        # 优先使用script_utils模块生成脚本
-        if script_utils is not None:
-            print(f"[MCP] 使用script_utils模块生成{script_type}类型的Frida脚本")
-            
-            # 根据脚本类型调用相应的生成函数
-            if script_type == 'hook':
-                script_content = script_utils._generate_hook_script(target, options)
-            elif script_type == 'memory_dump':
-                script_content = script_utils._generate_memory_dump_script(target, options)
-            elif script_type == 'string_hook':
-                script_content = script_utils._generate_string_hook_script(target, options)
-            
-            # 获取使用说明
-            usage_notes = script_utils._get_usage_notes()
-              
-            return usage_notes + "\n" + script_content
-    except Exception as e:
-        # 如果script_utils不可用，使用内置实现
-        print("[MCP] script_utils模块不可用，使用内置实现生成Frida脚本")
-        
-        # 检查target是否为地址
-        is_address = False
+
+    utils = script_utils
+    if utils is None:
+        # 运行时兜底：重新尝试在插件目录导入
         try:
-            if target.startswith('0x'):
-                int(target, 16)
-                is_address = True
-        except ValueError:
-            pass
-            
-            # 生成脚本模板
-            if is_address:
-                target_expr = f"ptr('{target}')"
-            else:
-                target_expr = f"'{target}'"
-            
-            # 应用类型，默认native（原生二进制）
-            app_type = options.get('app_type', 'native')
-            
-            # 根据应用类型生成不同的前缀和后缀
-            if app_type == 'java':
-                script_prefix = "Java.perform(function() {\n"
-                script_suffix = "\n});"
-            else:
-                script_prefix = ""  # 原生二进制不需要Java环境
-                script_suffix = ""
-    
-    if script_type == 'hook':
-        script_content = f"""
-    console.log("开始Hook目标函数: {target}");
-    
-    // 尝试不同的模块和导出方式
-    const moduleName = "{options.get('module', 'target')}";
-    const module = Process.getModuleByName(moduleName);
-    
-    if (!module) {{
-        console.log(`未找到模块: ${moduleName}`);
-        return;
-    }}
-    
-    let targetFunc = null;
-    try {{
-        if ({is_address}) {{
-            // 如果是地址，直接使用ptr
-            targetFunc = {target_expr};
-        }} else {{
-            // 如果是函数名，尝试在模块中查找导出函数
-            targetFunc = Module.findExportByName(moduleName, {target_expr});
-            if (!targetFunc) {{
-                console.log(`在模块{moduleName}中未找到导出函数: {target}`);
-                // 尝试使用模糊搜索查找函数
-                console.log("尝试模糊搜索函数...");
-                const matches = Memory.scanSync(module.base, module.size, `[${' '.repeat(20)}]${target}${' '.repeat(20)}`);
-                if (matches.length > 0) {{
-                    console.log(`找到 ${matches.length} 个可能的匹配`);
-                    targetFunc = matches[0].address;
-                    console.log(`使用第一个匹配: ${targetFunc}`);
-                }}
-            }}
-        }}
-        
-        if (!targetFunc) {{
-            console.log(`未找到目标函数: {target}`);
-            return;
-        }}
-        
-        Interceptor.attach(targetFunc, {{
-            onEnter: function(args) {{
-                console.log(`\n[+] 调用 {target}:`);
-                // 打印参数 - 可以根据函数签名调整
-                for (let i = 0; i < {options.get('arg_count', 4)}; i++) {{
-                    console.log(`  参数 ${i}:`, args[i]);
-                    // 尝试将参数解析为字符串
-                    try {{
-                        const str = Memory.readUtf8String(args[i]);
-                        if (str) console.log(`    字符串值: ${str}`);
-                    }} catch (e) {{}}
-                }}
-                // 保存参数供onLeave使用
-                this.args = args;
-            }},
-            onLeave: function(retval) {{
-                console.log(`[+] {target} 返回:`);
-                console.log(`  返回值:`, retval);
-                // 尝试解析返回值为字符串
-                try {{
-                    const str = Memory.readUtf8String(retval);
-                    if (str) console.log(`    字符串值: ${str}`);
-                }} catch (e) {{}}
-                console.log("----------------------------------------");
-            }}
-        }});
-    }} catch (e) {{
-        console.log(`Hook失败: ${e}`);
-    }}
-"""
-        script = script_prefix + script_content + script_suffix
-    elif script_type == 'memory_dump':
-        script_content = f"""
-    console.log("开始内存监控...");
-    
-    const targetAddr = {target_expr};
-    const memSize = {options.get('size', 1024)}; // 要监控的内存大小
-    
-    console.log(`监控地址范围: ${targetAddr} - ${ptr(targetAddr).add(memSize)}`);
-    
-    try {{
-        // 监控内存读写
-        Memory.protect(ptr(targetAddr), memSize, 'rwx');
-        
-        // Windows下可能需要特殊处理
-        if (Process.platform === 'windows') {{
-            console.log("Windows平台: 使用内存断点方式监控");
-            // 为内存区域设置读写断点
-            Memory.watchpoint(ptr(targetAddr), memSize, {{ 
-                read: true,
-                write: true,
-                onAccess: function(details) {{
-                    console.log(`\n[+] 内存访问:`);
-                    console.log(`  地址: ${details.address}`);
-                    console.log(`  类型: ${details.type}`); // 'read' 或 'write'
-                    console.log(`  大小: ${details.size} 字节`);
-                    
-                    // 打印调用栈
-                    const stack = Thread.backtrace(this.context, Backtracer.ACCURATE)
-                        .map(DebugSymbol.fromAddress).join('\n');
-                    console.log(`  调用栈:\n${stack}`);
-                    
-                    // 对于写操作，尝试打印写入的值
-                    if (details.type === 'write' && details.data) {{
-                        console.log(`  写入值:`, details.data);
-                    }}
-                    console.log("----------------------------------------");
-                }}
-            }});
-        }} else {{
-            // 其他平台使用accessMonitor
-            Memory.accessMonitor.enable();
-            
-            // 监听内存访问事件
-            Memory.accessMonitor.on('access', function(event) {{
-                if (event.address.compare(ptr(targetAddr)) >= 0 && 
-                    event.address.compare(ptr(targetAddr).add(memSize)) < 0) {{
-                    console.log(`\n[+] 内存访问:`);
-                    console.log(`  地址: ${event.address}`);
-                    console.log(`  类型: ${event.type}`); // 'read' 或 'write'
-                    console.log(`  大小: ${event.size} 字节`);
-                    
-                    // 打印调用栈
-                    const stack = Thread.backtrace(event.thread, Backtracer.ACCURATE)
-                        .map(DebugSymbol.fromAddress).join('\n');
-                    console.log(`  调用栈:\n${stack}`);
-                    
-                    // 对于写操作，尝试打印写入的值
-                    if (event.type === 'write') {{
-                        try {{
-                            console.log(`  写入值:`, Memory.readByteArray(event.address, event.size));
-                        }} catch (e) {{}}
-                    }}
-                    console.log("----------------------------------------");
-                }}
-            }});
-        }}
-        
-        console.log("内存监控已启动。按Ctrl+C停止。");
-    }} catch (e) {{
-        console.log(`内存监控设置失败: ${e}`);
-    }}
-"""
-        script = script_prefix + script_content + script_suffix
-    elif script_type == 'string_hook':
-        script_content = f"""
-    console.log("开始字符串监控...");
-    
-    // 存储已收集的字符串
-    const collectedStrings = new Set();
-    
-    // Hook常见的字符串处理函数
-    const stringFuncs = {{
-        'strcmp': Module.findExportByName(null, 'strcmp'),
-        'strcpy': Module.findExportByName(null, 'strcpy'),
-        'strlen': Module.findExportByName(null, 'strlen'),
-        'memcpy': Module.findExportByName(null, 'memcpy'),
-        'strcat': Module.findExportByName(null, 'strcat')
-    }};
-    
-    // Hook目标函数附近的字符串操作
-    if ({is_address}) {{
-        // 如果指定了地址，也监控该地址附近的内存读取
-        try {{
-            const targetAddr = {target_expr};
-            console.log(`监控地址附近的字符串: ${targetAddr}`);
-            Memory.scan(ptr(targetAddr).sub(0x1000), 0x2000, "[41-7a]{4,}", {{
-                onMatch: function(address, size) {{
-                    try {{
-                        const str = Memory.readUtf8String(address);
-                        if (str.length >= 4 && !collectedStrings.has(str)) {{
-                            collectedStrings.add(str);
-                            console.log(`\n[+] 发现字符串:`);
-                            console.log(`  地址: ${address}`);
-                            console.log(`  内容: "${str}"`);
-                            
-                            // 获取调用栈
-                            const stack = Thread.backtrace(Thread.currentThread(), Backtracer.ACCURATE)
-                                .map(DebugSymbol.fromAddress).join('\n');
-                            console.log(`  访问栈:\n${stack}`);
-                        }}
-                    }} catch (e) {{}}
-                }},
-                onComplete: function() {{}}
-            }});
-        }} catch (e) {{
-            console.log(`字符串扫描失败: ${e}`);
-        }}
-    }}
-    
-    // Hook字符串函数
-    for (const [name, func] of Object.entries(stringFuncs)) {{
-        if (func) {{
-            Interceptor.attach(func, {{
-                onEnter: function(args) {{
-                    try {{
-                        // 尝试读取第一个参数作为字符串
-                        const str = Memory.readUtf8String(args[0]);
-                        if (str && str.length >= 3 && !collectedStrings.has(str)) {{
-                            collectedStrings.add(str);
-                            console.log(`\n[+] 函数 {name} 使用字符串:`);
-                            console.log(`  字符串: "${str}"`);
-                            
-                            // 获取调用栈
-                            const stack = Thread.backtrace(this.context, Backtracer.ACCURATE)
-                                .map(DebugSymbol.fromAddress).join('\n');
-                            console.log(`  调用栈:\n${stack}`);
-                        }}
-                    }} catch (e) {{}}
-                }}
-            }});
-        }}
-    }}
-    
-    console.log("字符串监控已启动。按Ctrl+C停止。");
-    console.log("已收集的字符串将自动去重并显示。");
-"""
-        script = script_prefix + script_content + script_suffix
-    else:
-        raise IDAError(f"不支持的脚本类型: {script_type}")
-    
-    usage_notes = """// 使用说明:
-// 1. 确保已安装frida-tools: pip install frida-tools
-// 2. 对于Windows原生程序，使用以下命令运行:
-//    frida -p <进程ID> -l <脚本文件> --no-pause
-//    或附加到已运行的程序
-// 3. 对于Java程序，使用:
-//    frida -U -f <包名> -l <脚本文件> --no-pause
-// 4. 若要保存输出，可重定向到文件:
-//    frida -p <进程ID> -l <脚本文件> --no-pause > output.log
-"""
-    
-    return usage_notes + "\n" + script
+            import importlib
+            utils = importlib.import_module("script_utils")
+        except Exception as e:
+            raise IDAError(f"script_utils模块不可用: {str(e)}")
+
+    try:
+        is_address = utils._is_address_string(target)
+        if script_type == 'hook':
+            script_content = utils._generate_hook_script(target, is_address, options)
+        elif script_type == 'memory_dump':
+            script_content = utils._generate_memory_dump_script(target, options)
+        else:
+            script_content = utils._generate_string_hook_script(target, is_address, options)
+
+        app_type = options.get('app_type', 'native')
+        script_prefix, script_suffix = utils._get_app_environment(app_type)
+        usage_notes = utils._get_usage_notes()
+        return usage_notes + "\n" + script_prefix + script_content + script_suffix
+    except IDAError:
+        raise
+    except Exception as e:
+        raise IDAError(f"生成frida脚本失败: {str(e)}")
 
 @jsonrpc
 @idawrite

@@ -56,16 +56,37 @@ def load_config():
     """
     default_config = {
         "host": "127.0.0.1",
-        "port": 8745  # idalib服务器默认端口为8745
+        "port": 8745,  # idalib服务器默认端口为8745
     }
+
+    def _pick_port(value):
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            return None
+        if 1 <= port <= 65535:
+            return port
+        return None
     
     config_path = get_config_file_path()
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 user_config = json.load(f)
-                # 合并默认配置和用户配置
-                default_config.update(user_config)
+                if isinstance(user_config, dict):
+                    # idalib优先读取专用配置，再兼容顶层port
+                    port_candidates = [
+                        user_config.get("idalib_server", {}).get("port") if isinstance(user_config.get("idalib_server"), dict) else None,
+                        user_config.get("port"),
+                    ]
+                    host = user_config.get("host")
+                    if isinstance(host, str) and host.strip():
+                        default_config["host"] = host
+                    for candidate in port_candidates:
+                        picked_port = _pick_port(candidate)
+                        if picked_port is not None:
+                            default_config["port"] = picked_port
+                            break
         except Exception as e:
             print(f"警告: 加载配置文件失败: {e}")
     
@@ -74,15 +95,17 @@ def load_config():
         default_config["host"] = os.environ["MCP_HOST"]
     
     if "IDALIB_MCP_PORT" in os.environ:
-        try:
-            default_config["port"] = int(os.environ["IDALIB_MCP_PORT"])
-        except ValueError:
+        picked_port = _pick_port(os.environ["IDALIB_MCP_PORT"])
+        if picked_port is not None:
+            default_config["port"] = picked_port
+        else:
             print("警告: 环境变量IDALIB_MCP_PORT不是有效的端口号")
     elif "MCP_PORT" in os.environ:
         # 如果没有指定IDALIB_MCP_PORT，也可以使用通用的MCP_PORT
-        try:
-            default_config["port"] = int(os.environ["MCP_PORT"])
-        except ValueError:
+        picked_port = _pick_port(os.environ["MCP_PORT"])
+        if picked_port is not None:
+            default_config["port"] = picked_port
+        else:
             print("警告: 环境变量MCP_PORT不是有效的端口号")
     
     return default_config

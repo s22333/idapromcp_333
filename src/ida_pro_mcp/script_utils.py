@@ -254,7 +254,7 @@ def _generate_string_hook_script(target: str, is_address: bool, options: dict = 
     # 如果options为None，初始化为空字典
     if options is None:
         options = {}
-    memory_scan_code = """
+    memory_scan_code = f"""
     // Hook目标函数附近的字符串操作
     if ({is_address}) {{
         // 如果指定了地址，也监控该地址附近的内存读取
@@ -321,7 +321,7 @@ def _generate_string_hook_script(target: str, is_address: bool, options: dict = 
                         const str = Memory.readUtf8String(args[0]);
                         if (str && str.length >= 3 && !collectedStrings.has(str)) {{
                             collectedStrings.add(str);
-                            console.log(`\n[+] 函数 {{name}} 使用字符串:`);
+                            console.log(`\n[+] 函数 ${{name}} 使用字符串:`);
                             console.log(`  字符串: "${{str}}"`);
                             
                             // 获取调用栈
@@ -359,4 +359,4 @@ def _get_usage_notes() -> str:
 //    或附加到已运行的程序
 // 3. 对于Java程序，使用:
 //    frida -U -f <包名> -l <脚本文件> --no-pause"""
-
+
