@@ -1,24 +1,38 @@
-# IDA Pro MCP 插件（增强版）
+# IDA Pro MCP 插件（轻量化）
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![IDA Pro Version](https://img.shields.io/badge/IDA%20Pro-7.5%2B-green.svg)](https://www.hex-rays.com/products/ida/)
 
+---
+
 ## 1. 项目简介
 
 `ida-pro-mcp` 是一个面向 IDA Pro 的 MCP 服务端/插件项目，用于把 IDA 分析能力暴露给 MCP 客户端（如 Cline、Roo Code、Claude Desktop 等）。
 
+本项目基于 [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp) 进行二次开发与功能扩展，聚焦于去除冗余 MCP 能力，减少上下文占用，节省 Token 开销。
+
+在使用过程中，其实ai才是主力了，但是似乎我觉得原项目太多工具，反而拖垮。所以让克劳德先生跑了一个轻量化的（之前想做大做强，但是根本比不上人家），方便ai去读，减少上下文吧。其实我也是自己搞着玩玩，本来想着烂尾了算了，没想到师傅们这么热情，就趁着空改一改。但是还是十分推荐大家去看原项目，可能你的ai推荐到我这里了，大家多多仔细斟酌。
+
 当前仓库包含两条运行路径：
 
-- `server`：连接 IDA 内插件提供的 JSON-RPC 能力（常用模式）
-- `idalib_server`：基于 `idalib` 的无界面模式（需要本机 IDA 运行库）
+| 路径              | 说明                                                |
+| ----------------- | --------------------------------------------------- |
+| `server`        | 连接 IDA 内插件提供的 JSON-RPC 能力（常用模式）     |
+| `idalib_server` | 基于 `idalib` 的无界面模式（需要本机 IDA 运行库） |
+
+---
 
 ## 2. 主要能力
 
-- 暴露 IDA 反汇编/反编译与符号信息查询能力
+- 暴露 IDA 反汇编 / 反编译与符号信息查询能力
 - 支持批量重命名、注释、类型相关操作（含 unsafe 工具）
-- 支持脚本辅助能力（如 Frida/Angr 脚本生成与保存）
 - 支持自动安装 MCP 客户端配置与 IDA 插件入口
+- 支持轻量辅助能力：
+  - `get_current_context_summary`
+  - `get_selected_function_overview`
+
+---
 
 ## 3. 项目结构
 
@@ -28,10 +42,13 @@ src/ida_pro_mcp/
 ├── server.py            # MCP 主服务（连接 IDA 插件 JSON-RPC）
 ├── idalib_server.py     # idalib 模式 MCP 服务
 ├── mcp-plugin.py        # IDA 侧插件（JSON-RPC 服务）
+├── mcp-plugin_optimized.py  # IDA 侧插件优化版（模块化重构）
 ├── script_utils.py      # 脚本生成辅助
 ├── mcp_config.json      # 默认配置
 └── server_generated.py  # 自动生成（请勿手改）
 ```
+
+---
 
 ## 4. 环境要求
 
@@ -42,8 +59,10 @@ src/ida_pro_mcp/
 
 ### 4.2 idalib 模式额外要求
 
-- IDA Pro `>= 9.0`（`idapro`/`idalib` 运行库可用）
+- IDA Pro `>= 9.0`（`idapro` / `idalib` 运行库可用）
 - 设置 `IDADIR` 到有效 IDA 安装目录
+
+---
 
 ## 5. 安装
 
@@ -57,11 +76,11 @@ pip install -e .
 pip install angr frida-tools
 ```
 
+---
+
 ## 6. 配置说明
 
 默认配置文件：`src/ida_pro_mcp/mcp_config.json`
-
-当前仓库内默认值：
 
 ```json
 {
@@ -73,31 +92,31 @@ pip install angr frida-tools
 }
 ```
 
-配置优先级（高到低）：
+配置优先级（高 → 低）：
 
 1. 环境变量
 2. 配置文件
 3. 代码内默认值
 
-环境变量：
+| 环境变量            | 说明                                                  |
+| ------------------- | ----------------------------------------------------- |
+| `MCP_HOST`        | 覆盖监听地址                                          |
+| `MCP_PORT`        | 覆盖 `server.py` 的 RPC 目标端口                    |
+| `IDALIB_MCP_PORT` | 覆盖 `idalib_server.py` 端口（优先于 `MCP_PORT`） |
 
-- `MCP_HOST`：覆盖监听地址
-- `MCP_PORT`：覆盖 `server.py` 的 RPC 目标端口
-- `IDALIB_MCP_PORT`：覆盖 `idalib_server.py` 端口（优先于 `MCP_PORT`）
+> 注：若缺少配置文件，`server.py` 内置端口默认是 `13337`；仓库自带配置将其覆盖为 `13338`。
 
-说明：若缺少配置文件，`server.py` 内置端口默认是 `13337`；仓库自带配置将其覆盖为 `13338`。
+---
 
 ## 7. 使用方法
 
 ### 7.1 安装 MCP 客户端配置与 IDA 插件
 
 ```bash
+# 安装
 ida-pro-mcp --install
-```
 
-卸载：
-
-```bash
+# 卸载
 ida-pro-mcp --uninstall
 ```
 
@@ -109,11 +128,13 @@ python -m ida_pro_mcp.server
 
 常用参数：
 
-- `--transport`：`stdio`（默认）或 `http://127.0.0.1:8744`
-- `--ida-rpc`：指定 IDA 插件 RPC 地址（默认读取配置后通常为 `http://127.0.0.1:13338`）
-- `--unsafe`：启用危险工具
-- `--config`：打印 MCP 客户端配置 JSON
-- `--auto-run-ida <binary>`：自动启动 IDA 并加载指定样本（Windows 体验更完整）
+| 参数                        | 说明                                                      |
+| --------------------------- | --------------------------------------------------------- |
+| `--transport`             | `stdio`（默认）或 `http://127.0.0.1:8744`             |
+| `--ida-rpc`               | 指定 IDA 插件 RPC 地址（默认 `http://127.0.0.1:13338`） |
+| `--unsafe`                | 启用危险工具                                              |
+| `--config`                | 打印 MCP 客户端配置 JSON                                  |
+| `--auto-run-ida <binary>` | 自动启动 IDA 并加载指定样本（Windows 体验更完整）         |
 
 ### 7.3 启动 idalib 模式
 
@@ -121,7 +142,7 @@ python -m ida_pro_mcp.server
 python -m ida_pro_mcp.idalib_server <binary_path> --host 127.0.0.1 --port 8746
 ```
 
-如果报错 `Cannot load IDA library file idalib.dll`，请先检查：
+若报错 `Cannot load IDA library file idalib.dll`，请检查：
 
 - IDA 版本是否为 9.0+
 - `IDADIR` 是否指向有效 IDA 安装目录
@@ -152,44 +173,102 @@ resp = requests.post(
 print(resp.json())
 ```
 
+> 轻量版插件可在 IDA 中通过 `Edit → Plugins → MCP-Test` 启动，热键为 `Ctrl+Alt+T`（macOS 下为 `Ctrl+Option+T`）。
+
+就是安装插件那一套，ida里面开mcp即可。这些都是给ai看的，方便它甚至不用配置json就能跑
+
+---
+
 ## 8. 项目完整性检查（本地）
 
-最近一次检查项：
+最近一次检查结果：
 
-- `python -m compileall src`：通过
-- `python -m ida_pro_mcp.server --help`：通过
-- `python -m ida_pro_mcp.server --config`：通过
+| 检查项                                    | 状态          |
+| ----------------------------------------- | ------------- |
+| `python -m compileall src`              | ✅ 通过       |
+| `python -m ida_pro_mcp.server --help`   | ✅ 通过       |
+| `python -m ida_pro_mcp.server --config` | ✅ 通过       |
+| 轻量版接口验收                            | ✅ 40/40 通过 |
 
-说明：
+> 当前仓库未包含可直接执行的单元测试集合，`pytest` 依赖存在但需自行安装并补充测试用例。`idalib_server` 在无 IDA 运行库环境下无法直接导入，属于预期行为。
 
-- 当前仓库未包含可直接执行的单元测试集合，`pytest` 依赖存在但本地环境需自行安装并补充测试用例。
-- `idalib_server` 在无 IDA 运行库环境下无法直接导入，属于预期行为。
+---
 
 ## 9. 常见问题
 
 ### 9.1 MCP 无法连接 IDA
 
 - 确认 IDA 已加载样本
-- 在 IDA 中手动启动插件：`Edit -> Plugins -> MCP`（默认热键 `Ctrl+Alt+M`）
+- 在 IDA 中手动启动插件：`Edit → Plugins → MCP`（默认热键 `Ctrl+Alt+M`）
 - 检查端口占用与 `mcp_config.json` 端口一致性
 
 ### 9.2 端口冲突
 
-- 修改 `mcp_config.json` 中 `port` / `plugin.port` / `idalib_server.port`
+- 修改 `mcp_config.json` 中的 `port` / `plugin.port` / `idalib_server.port`
 - 或通过环境变量 `MCP_PORT` / `IDALIB_MCP_PORT` 覆盖
 
-### 9.3 Frida/Angr 相关工具不可用
-
-- 按需安装额外依赖：`pip install frida-tools angr`
+---
 
 ## 10. 开发说明
 
-- 入口脚本：
-  - `ida-pro-mcp = ida_pro_mcp.server:main`
-  - `idalib-mcp = ida_pro_mcp.idalib_server:main`
-- 生成文件 `server_generated.py` 由 `server.py` 动态生成，不建议手工维护。
+入口脚本：
 
-## 11. 许可证
+- `ida-pro-mcp` → `ida_pro_mcp.server:main`
+- `idalib-mcp` → `ida_pro_mcp.idalib_server:main`
 
+> `server_generated.py` 由 `server.py` 动态生成，不建议手工维护。
+
+---
+
+## 11. 联系方式
+
+### 开发者
+
+| 名称    | 联系方式       |
+| ------- | -------------- |
+| name    | QQ：1559820232 |
+| grand   | QQ：3527424707 |
+| Britney | QQ：2855057900 |
+
+### 项目链接
+
+- GitHub 仓库：[https://github.com/namename333/idapromcp_333](https://github.com/namename333/idapromcp_333)
+- 原项目：[https://github.com/mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp)
+
+---
+
+## 12. 许可证
+
+本项目采用 [MIT License](https://opensource.org/licenses/MIT) 开源，任何人均可自由使用、复制、修改、合并、发布、分发、再授权或销售本软件，无需经过作者许可。
+
+```
 MIT License
 
+Copyright (c) 2025 name, grand, Britney
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
+## 13. 致谢
+
+- 感谢 mrexodia 提供的原始 IDA Pro MCP 插件
+- 感谢克劳德先生的辛苦付出
+- 感谢所有为该项目做出贡献的开发者和用户
